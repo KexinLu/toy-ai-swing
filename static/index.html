@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Audio Swinger</title>
+  <style>
+    .volume-bar {
+      height: 20px;
+      background: gray;
+      margin: 4px 0;
+    }
+    .volume-fill {
+      height: 100%;
+      background: green;
+    }
+  </style>
+</head>
+<body>
+  <h1>🎵 Audio Swing Controller</h1>
+
+  <div>
+    <label>YouTube URL: <input type="text" id="url"></label><br>
+    <label>Save As: <input type="text" id="name"></label>
+    <button onclick="download()">Download</button>
+  </div>
+
+  <div>
+    <label>🎧 Load File:
+      <select id="fileSelect"></select>
+    </label>
+    <button onclick="loadSelected()">Load</button>
+  </div>
+
+  <div>
+    <label>Pan: <input type="range" min="-1" max="1" step="0.01" id="pan" value="0"></label>
+  </div>
+
+  <div>
+    <label>Swing Interval (s): <input type="number" id="interval" step="0.1" value="2.0"></label>
+    <button onclick="startSwing()">Start Swing</button>
+    <button onclick="stopSwing()">Stop Swing</button>
+  </div>
+
+  <div>
+    <button onclick="play()">Play</button>
+    <button onclick="stop()">Stop</button>
+  </div>
+  <div>
+    <label><input type="checkbox" id="loopToggle" onchange="setLoop()"> Loop Playback</label>
+  </div>
+
+  <div>
+    <strong>Left Channel:</strong>
+    <div class="volume-bar"><div id="leftVolume" class="volume-fill" style="width: 50%;"></div></div>
+    <strong>Right Channel:</strong>
+    <div class="volume-bar"><div id="rightVolume" class="volume-fill" style="width: 50%;"></div></div>
+    <div>
+      <label>🔊 Volume: <input type="range" min="0" max="1" step="0.01" id="volume" value="1.0" onchange="setVolume()"></label>
+    </div>
+  </div>
+
+  <script>
+    const socket = new WebSocket("ws://localhost:8002/ws");
+    let currentPan = 0;
+
+    document.getElementById("pan").oninput = function () {
+      currentPan = parseFloat(this.value);
+      updateVolumeBars(currentPan);
+      socket.send(JSON.stringify({ action: "pan", value: currentPan }));
+    };
+
+    function updateVolumeBars(pan) {
+      const left = 0.5 * (1 - pan);
+      const right = 0.5 * (1 + pan);
+      document.getElementById("leftVolume").style.width = (left * 100) + "%";
+      document.getElementById("rightVolume").style.width = (right * 100) + "%";
+    }
+
+    function startSwing() {
+      const interval = parseFloat(document.getElementById("interval").value);
+      socket.send(JSON.stringify({ action: "swing", interval: interval }));
+    }
+
+    function stopSwing() {
+      socket.send(JSON.stringify({ action: "stop_swing" }));
+    }
+
+    function download() {
+      const url = document.getElementById("url").value;
+      const name = document.getElementById("name").value;
+      fetch(`/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name)}`)
+        .then(() => refreshFileList());
+    }
+
+    function play() {
+      fetch("/play");
+    }
+
+    function stop() {
+      fetch("/stop");
+    }
+
+    function loadSelected() {
+      const file = document.getElementById("fileSelect").value;
+      fetch(`/load?file=${file}`);
+    }
+
+    function refreshFileList() {
+      fetch("/list")
+        .then(res => res.json())
+        .then(data => {
+          const select = document.getElementById("fileSelect");
+          select.innerHTML = "";
+          data.files.forEach(f => {
+            const option = document.createElement("option");
+            option.value = f;
+            option.textContent = f;
+            select.appendChild(option);
+          });
+        });
+    }
+    function setLoop() {
+	    const loopEnabled = document.getElementById("loopToggle").checked;
+	    fetch(`/set_loop?enable=${loopEnabled}`);
+    }
+    function setVolume() {
+  const volume = document.getElementById("volume").value;
+  fetch(`/set_volume?value=${volume}`);
+}
+
+    // Load file list on page load
+    refreshFileList();
+  </script>
+</body>
+</html>
+
