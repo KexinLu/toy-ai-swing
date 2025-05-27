@@ -9,9 +9,18 @@ import time
 import os
 import glob
 import asyncio
+from enum import StrEnum
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+class SwingPattern(StrEnum):
+    SINE = "sine"
+    PARABOLA = "parabola"
+    CUBIC = "cubic"
+    TRIANGLE = "triangle"
+    EXPONENTIAL = "exponential"
+    LOGARITHMIC = "logarithmic"
 
 class SwingPlayer:
     def __init__(self):
@@ -29,6 +38,7 @@ class SwingPlayer:
         self.thread = None
         self.running = False
         self.websocket = None
+        self.pattern = SwingPattern.SINE  # Default pattern
 
     def load(self, path):
         self.sound = self.pygame.mixer.Sound(path)
@@ -47,12 +57,40 @@ class SwingPlayer:
         if self.channel:
             self.channel.stop()
 
+    def _get_pattern_value(self, t, f):
+        import math
+        if self.pattern == SwingPattern.SINE:
+            return math.sin(2 * math.pi * f * t)
+        elif self.pattern == SwingPattern.PARABOLA:
+            # Parabola pattern: slow in middle, fast at edges
+            x = math.sin(2 * math.pi * f * t)
+            return x * abs(x)  # This creates a parabolic curve
+        elif self.pattern == SwingPattern.CUBIC:
+            # Cubic pattern: fast in middle, slow at edges
+            x = math.sin(2 * math.pi * f * t)
+            return x * x * x
+        elif self.pattern == SwingPattern.TRIANGLE:
+            # Triangle wave: linear transitions
+            x = (2 * math.pi * f * t) % (2 * math.pi)
+            return 2 * abs(x / math.pi - 1) - 1
+        elif self.pattern == SwingPattern.EXPONENTIAL:
+            # Exponential pattern: very slow at edges, fast in middle
+            x = math.sin(2 * math.pi * f * t)
+            return math.copysign(abs(x) ** 0.5, x)
+        elif self.pattern == SwingPattern.LOGARITHMIC:
+            # Logarithmic pattern: very fast at edges, slow in middle
+            x = math.sin(2 * math.pi * f * t)
+            return math.copysign(abs(x) ** 2, x)
+        else:
+            return math.sin(2 * math.pi * f * t)  # Default to sine
+
     def _swing_loop(self):
         import math
+        import asyncio
         t = 0.0
         while self.running and self.swing:
             f = 1.0 / self.interval
-            self.pan = math.sin(2 * math.pi * f * t)
+            self.pan = self._get_pattern_value(t, f)
             # Calculate base volumes with smooth transition to min volume
             raw_left = 0.5 * (1.0 - self.pan) * self.volume
             raw_right = 0.5 * (1.0 + self.pan) * self.volume
@@ -64,18 +102,18 @@ class SwingPlayer:
             if self.channel:
                 self.channel.set_volume(left, right)
                 # Send volume updates through WebSocket
-                if hasattr(self, 'websocket'):
+                if hasattr(self, 'websocket') and self.websocket:
                     try:
                         asyncio.run_coroutine_threadsafe(
                             self.websocket.send_json({
                                 "action": "volume_update",
-                                "left": left,
-                                "right": right
+                                "left": float(left),  # Ensure we're sending float values
+                                "right": float(right)
                             }),
                             self.loop
                         )
-                    except:
-                        pass
+                    except Exception as e:
+                        print(f"Error sending volume update: {e}")
             time.sleep(0.01)
             t += 0.01
 
@@ -94,18 +132,18 @@ class SwingPlayer:
         if self.channel:
             self.channel.set_volume(left, right)
             # Send volume updates through WebSocket
-            if hasattr(self, 'websocket'):
+            if hasattr(self, 'websocket') and self.websocket:
                 try:
                     asyncio.run_coroutine_threadsafe(
                         self.websocket.send_json({
                             "action": "volume_update",
-                            "left": left,
-                            "right": right
+                            "left": float(left),  # Ensure we're sending float values
+                            "right": float(right)
                         }),
                         self.loop
                     )
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Error sending volume update: {e}")
 
     def enable_auto_swing(self, interval=2.0):
         self.swing = True
@@ -124,6 +162,13 @@ class SwingPlayer:
         self.volume = max(0.0, min(1.0, volume))
         # Apply volume update with current pan
         self.set_pan(self.pan)
+
+    def set_pattern(self, pattern: str) -> bool:
+        try:
+            self.pattern = SwingPattern(pattern)
+            return True
+        except ValueError:
+            return False
 
 
 audio_controller = SwingPlayer()
@@ -216,6 +261,13 @@ def api_set_volume(value: float = Query(..., ge=0.0, le=1.0)):
 def api_set_min_volume(value: float = Query(..., ge=0.0, le=1.0)):
     audio_controller.min_volume = value
     return {"status": "min volume set", "value": value}
+
+
+@app.get("/set_pattern")
+def api_set_pattern(pattern: str):
+    if audio_controller.set_pattern(pattern):
+        return {"status": "pattern set", "value": pattern}
+    return {"error": "invalid pattern"}
 
 
 @app.websocket("/ws")

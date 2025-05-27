@@ -41,6 +41,19 @@
   </div>
 
   <div>
+    <label>Swing Pattern:
+      <select id="patternSelect" onchange="setPattern()">
+        <option value="sine">Sine Wave (Default)</option>
+        <option value="parabola">Parabola (Slow in Middle)</option>
+        <option value="cubic">Cubic (Fast in Middle)</option>
+        <option value="triangle">Triangle (Linear)</option>
+        <option value="exponential">Exponential (Very Slow at Edges)</option>
+        <option value="logarithmic">Logarithmic (Very Fast at Edges)</option>
+      </select>
+    </label>
+  </div>
+
+  <div>
     <button onclick="play()">Play</button>
     <button onclick="stop()">Stop</button>
   </div>
@@ -75,7 +88,10 @@
 
     document.getElementById("pan").oninput = function () {
       currentPan = parseFloat(this.value);
-      updateVolumeBars(currentPan);
+      const left = 0.5 * (1 - currentPan);
+      const right = 0.5 * (1 + currentPan);
+      document.getElementById("leftVolume").style.width = (left * 100) + "%";
+      document.getElementById("rightVolume").style.width = (right * 100) + "%";
       socket.send(JSON.stringify({ action: "pan", value: currentPan }));
     };
 
@@ -141,6 +157,17 @@
     function setMinVolume() {
       const minVolume = document.getElementById("minVolume").value;
       fetch(`/set_min_volume?value=${minVolume}`);
+    }
+
+    function setPattern() {
+      const pattern = document.getElementById("patternSelect").value;
+      fetch(`/set_pattern?pattern=${pattern}`)
+        .then(response => response.json())
+        .then(data => {
+          if (data.error) {
+            console.error("Invalid pattern:", data.error);
+          }
+        });
     }
 
     // Load file list on page load
