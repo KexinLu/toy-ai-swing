@@ -8,6 +8,7 @@ import threading
 import time
 import os
 import glob
+import asyncio
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -23,9 +24,11 @@ class SwingPlayer:
         self.loop = False
         self.pan = 0.0
         self.volume = 1.0
+        self.min_volume = 0.2  # Default minimum volume
         self.interval = 2.0
         self.thread = None
         self.running = False
+        self.websocket = None
 
     def load(self, path):
         self.sound = self.pygame.mixer.Sound(path)
@@ -50,20 +53,59 @@ class SwingPlayer:
         while self.running and self.swing:
             f = 1.0 / self.interval
             self.pan = math.sin(2 * math.pi * f * t)
-            left = 0.5 * (1.0 - self.pan) * self.volume
-            right = 0.5 * (1.0 + self.pan) * self.volume
+            # Calculate base volumes with smooth transition to min volume
+            raw_left = 0.5 * (1.0 - self.pan) * self.volume
+            raw_right = 0.5 * (1.0 + self.pan) * self.volume
+            # Smooth transition to min volume using a sigmoid-like function
+            min_vol = self.min_volume * self.volume
+            left = min_vol + (1 - min_vol) * (raw_left ** 2)
+            right = min_vol + (1 - min_vol) * (raw_right ** 2)
+            
             if self.channel:
                 self.channel.set_volume(left, right)
+                # Send volume updates through WebSocket
+                if hasattr(self, 'websocket'):
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            self.websocket.send_json({
+                                "action": "volume_update",
+                                "left": left,
+                                "right": right
+                            }),
+                            self.loop
+                        )
+                    except:
+                        pass
             time.sleep(0.01)
             t += 0.01
 
     def set_pan(self, pan):
+        import asyncio
         self.swing = False
         self.pan = max(-1.0, min(1.0, pan))
-        left = 0.5 * (1.0 - self.pan) * self.volume
-        right = 0.5 * (1.0 + self.pan) * self.volume
+        # Calculate base volumes with smooth transition to min volume
+        raw_left = 0.5 * (1.0 - self.pan) * self.volume
+        raw_right = 0.5 * (1.0 + self.pan) * self.volume
+        # Smooth transition to min volume using a sigmoid-like function
+        min_vol = self.min_volume * self.volume
+        left = min_vol + (1 - min_vol) * (raw_left ** 2)
+        right = min_vol + (1 - min_vol) * (raw_right ** 2)
+        
         if self.channel:
             self.channel.set_volume(left, right)
+            # Send volume updates through WebSocket
+            if hasattr(self, 'websocket'):
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        self.websocket.send_json({
+                            "action": "volume_update",
+                            "left": left,
+                            "right": right
+                        }),
+                        self.loop
+                    )
+                except:
+                    pass
 
     def enable_auto_swing(self, interval=2.0):
         self.swing = True
@@ -170,10 +212,18 @@ def api_set_volume(value: float = Query(..., ge=0.0, le=1.0)):
     return {"status": "volume set", "value": value}
 
 
+@app.get("/set_min_volume")
+def api_set_min_volume(value: float = Query(..., ge=0.0, le=1.0)):
+    audio_controller.min_volume = value
+    return {"status": "min volume set", "value": value}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
+        audio_controller.websocket = websocket
+        audio_controller.loop = asyncio.get_event_loop()
         while True:
             msg = await websocket.receive_json()
             action = msg.get("action")

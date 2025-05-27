@@ -56,11 +56,22 @@
     <div>
       <label>🔊 Volume: <input type="range" min="0" max="1" step="0.01" id="volume" value="1.0" onchange="setVolume()"></label>
     </div>
+    <div>
+      <label>🔈 Min Volume: <input type="range" min="0" max="1" step="0.01" id="minVolume" value="0.2" onchange="setMinVolume()"></label>
+    </div>
   </div>
 
   <script>
     const socket = new WebSocket("ws://localhost:8002/ws");
     let currentPan = 0;
+
+    socket.onmessage = function(event) {
+      const data = JSON.parse(event.data);
+      if (data.action === "volume_update") {
+        document.getElementById("leftVolume").style.width = (data.left * 100) + "%";
+        document.getElementById("rightVolume").style.width = (data.right * 100) + "%";
+      }
+    };
 
     document.getElementById("pan").oninput = function () {
       currentPan = parseFloat(this.value);
@@ -123,9 +134,14 @@
 	    fetch(`/set_loop?enable=${loopEnabled}`);
     }
     function setVolume() {
-  const volume = document.getElementById("volume").value;
-  fetch(`/set_volume?value=${volume}`);
-}
+      const volume = document.getElementById("volume").value;
+      fetch(`/set_volume?value=${volume}`);
+    }
+
+    function setMinVolume() {
+      const minVolume = document.getElementById("minVolume").value;
+      fetch(`/set_min_volume?value=${minVolume}`);
+    }
 
     // Load file list on page load
     refreshFileList();
